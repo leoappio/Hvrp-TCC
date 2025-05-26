@@ -97,25 +97,50 @@ model += (
     )
 )
 
-# Restrições
+
+# (4.2) Cada cliente é visitado exatamente uma vez
 for i in clients:
     model += pulp.lpSum(a[i, k] + b[i, k] for k in vehicle_types) == 1
 
+
+# (4.3) Fluxo de entrada = a + b
+# (4.4) Fluxo de saída = b
 for i in clients:
     for k in vehicle_types:
         model += pulp.lpSum(y[j, i, k] for j in nodes if j != i) == a[i, k] + b[i, k]
         model += pulp.lpSum(y[i, j, k] for j in nodes if j != i) == b[i, k]
 
-for k in vehicle_types:
-    model += pulp.lpSum(y[depot, j, k] for j in clients) <= 1
-    model += pulp.lpSum(y[i, depot, k] for i in clients) <= 1
 
+# (4.5) Partida do depósito igual ao número de rotas finalizadas com a[i,k]
+for k in vehicle_types:
+    model += pulp.lpSum(y[depot, j, k] for j in clients) == pulp.lpSum(a[i, k] for i in clients)
+
+
+# (4.6) Capacidade acumulada entre i → j
 for k in vehicle_types:
     Q = vehicle_types[k]["capacity"]
-    for i in clients:
-        model += v[i, k] >= demands[i] * (a[i, k] + b[i, k])
-        model += v[i, k] <= Q * (a[i, k] + b[i, k])
     for i, j in edges:
-        if i != depot and j != depot:
-            model += v[j, k] >= v[i, k] + demands[j] - Q * (1 - y[i, j, k])
+        if i != depot:
+            model += (
+                v[j, k] >= v[i, k]
+                + (demands[j] * (a[j, k] + b[j, k]) if j in clients else 0)
+                - Q * (a[i, k] + b[i, k] - y[i, j, k])
+            )
 
+
+# (4.7) Carga mínima no cliente i considerando entrada de arcos
+for i in clients:
+    for k in vehicle_types:
+        model += (
+            v[i, k] >= demands[i] * (a[i, k] + b[i, k])
+            + pulp.lpSum(demands[j] * y[j, i, k] for j in nodes if j != i)
+        )
+
+
+# (4.8) Carga máxima no cliente i
+for i in clients:
+    for k in vehicle_types:
+        Q = vehicle_types[k]["capacity"]
+        model += v[i, k] <= Q * (a[i, k] + b[i, k])
+
+print('ok')
