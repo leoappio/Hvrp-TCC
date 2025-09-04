@@ -1,9 +1,8 @@
 NAME : E-n20-k5
-COMMENT : Adaptado da instância E-n51-k5, com apenas os 20 primeiros nós
 TYPE : HVRP
 DIMENSION : 20
 EDGE_WEIGHT_TYPE : EUC_2D
-CAPACITY : 160
+
 NODE_COORD_SECTION
 1 30 40
 2 37 52
@@ -25,6 +24,8 @@ NODE_COORD_SECTION
 18 27 23
 19 17 33
 20 13 13
+21 57 58
+
 DEMAND_SECTION
 1 0
 2 7
@@ -46,7 +47,16 @@ DEMAND_SECTION
 18 3
 19 41
 20 9
+21 28
+
+VEHICLE_TYPES
+# id capacity fixed_cost var_cost count
+A 60  1000 1 2
+B 80  1500 1 1
+C 150 3000 1 1
+END_VEHICLE_TYPES
+
 DEPOT_SECTION
- 1
- -1
+1
+-1
 EOF

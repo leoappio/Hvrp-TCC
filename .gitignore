@@ -1,0 +1,41 @@
+# --- Ambientes virtuais ---
+.venv/
+venv/
+ENV/
+env/
+*.pyenv
+
+# --- Arquivos temporários / cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Logs / outputs temporários ---
+*.log
+*.out
+*.tmp
+
+# --- Artefatos de Jupyter ---
+.ipynb_checkpoints/
+*.ipynb~
+
+# --- Configurações de IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Arquivos de build ---
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Dados temporários do solver PuLP/CBC ---
+*.mps
+*.sol
+*.lp
+
+# --- Sistema operacional ---
+.DS_Store
+Thumbs.db
