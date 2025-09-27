@@ -16,9 +16,9 @@ DEMAND_SECTION
 4 4
 
 VEHICLE_TYPES
-# id capacity fixed_cost var_cost count
-A 10  100 1 2
-B 12  120 1 2
+# id capacity fixed_cost var_cost
+A 10  100 1 
+B 12  120 1 
 END_VEHICLE_TYPES
 
 DEPOT_SECTION

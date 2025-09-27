@@ -1,7 +1,7 @@
 import pulp
 from main import build_hvrp_model, draw_solution
 
-mdl = build_hvrp_model("tests/tiny_hvrp.vrp")
+mdl = build_hvrp_model("problems/tiny_hvrp.vrp")
 solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=30)
 mdl.solve(solver)
 

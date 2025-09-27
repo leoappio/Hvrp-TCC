@@ -1,10 +1,10 @@
-NAME : E-n20-k5
+NAME : Problem-6
 TYPE : HVRP
 DIMENSION : 20
 EDGE_WEIGHT_TYPE : EUC_2D
 
 NODE_COORD_SECTION
-1 30 40
+1 20 20
 2 37 52
 3 49 49
 4 52 64
@@ -50,10 +50,10 @@ DEMAND_SECTION
 21 28
 
 VEHICLE_TYPES
-# id capacity fixed_cost var_cost count
-A 60  1000 1 2
-B 80  1500 1 1
-C 150 3000 1 1
+# id capacity fixed_cost var_cost
+A 60  1000 1 
+B 80  1500 1 
+C 150 3000 1 
 END_VEHICLE_TYPES
 
 DEPOT_SECTION

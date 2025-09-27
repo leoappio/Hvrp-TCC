@@ -5,19 +5,16 @@ import matplotlib.pyplot as plt
 
 
 def read_hvrp_instance(filepath: str):
-    coords = {}
-    demands = {}
+    coords, demands = {}, {}
     vehicle_types = {}
-    fleet_count = {}
     reading_coords = reading_demands = reading_vtypes = False
     depot = None
 
     with open(filepath, "r", encoding="utf-8") as f:
         for raw in f:
             ln = raw.strip()
-            if not ln:
+            if not ln: 
                 continue
-
             if ln.startswith("NODE_COORD_SECTION"):
                 reading_coords, reading_demands, reading_vtypes = True, False, False
                 continue
@@ -43,15 +40,14 @@ def read_hvrp_instance(filepath: str):
                 i, q = ln.split()
                 demands[int(i)] = int(q)
             elif reading_vtypes:
-                if ln.startswith("#"):
+                if ln.startswith("#"): 
                     continue
-                k, cap, fixed, var, cnt = ln.split()
+                k, cap, fixed, var = ln.split()
                 vehicle_types[k] = {
                     "capacity": float(cap),
                     "fixed_cost": float(fixed),
                     "var_cost": float(var),
                 }
-                fleet_count[k] = int(cnt)
             else:
                 try:
                     val = int(ln)
@@ -62,8 +58,7 @@ def read_hvrp_instance(filepath: str):
 
     if depot is None:
         raise ValueError("DEPOT_SECTION ausente ou inválida no arquivo .vrp")
-
-    return coords, demands, depot, vehicle_types, fleet_count
+    return coords, demands, depot, vehicle_types
 
 
 def euclidean(i, j, coords):
@@ -72,84 +67,102 @@ def euclidean(i, j, coords):
 
 
 def build_hvrp_model(instance_path: str) -> pulp.LpProblem:
-    coords, demands, depot, Kp, Kcount = read_hvrp_instance(instance_path)
+    coords, demands, depot, Kp = read_hvrp_instance(instance_path)
 
     nodes = sorted(coords.keys())
     clients = [i for i in nodes if i != depot]
-    edges = [(i, j) for i in nodes for j in nodes if i != j]
 
     K_i = {i: [k for k, par in Kp.items() if demands[i] <= par["capacity"]]
            for i in clients}
 
-    dij = {(i, j): euclidean(i, j, coords) for (i, j) in edges}
-    cijk = {(i, j, k): Kp[k]["var_cost"] * dij[i, j] for (i, j) in edges for k in Kp}
+    def dist(i, j): return euclidean(i, j, coords)
+
+    Y_index = []
+    Y_out_dep = {k: [] for k in Kp} 
+    Y_in_dep  = {k: [] for k in Kp}
+    Y_ijk_by_k = {k: [] for k in Kp}
+
+    for k in Kp:
+        for j in clients:
+            if k in K_i[j]:
+                Y_index.append((depot, j, k))
+                Y_out_dep[k].append((depot, j, k))
+                Y_ijk_by_k[k].append((depot, j, k))
+        for i in clients:
+            if k in K_i[i]:
+                Y_index.append((i, depot, k))
+                Y_in_dep[k].append((i, depot, k))
+                Y_ijk_by_k[k].append((i, depot, k))
+        for i in clients:
+            if k not in K_i[i]:
+                continue
+            for j in clients:
+                if i == j or (k not in K_i[j]):
+                    continue
+                Y_index.append((i, j, k))
+                Y_ijk_by_k[k].append((i, j, k))
+
+    cijk = {(i, j, k): Kp[k]["var_cost"] * dist(i, j) for (i, j, k) in Y_index}
 
     mdl = pulp.LpProblem("HVRP_MIP", pulp.LpMinimize)
 
-    y = pulp.LpVariable.dicts("y", ((i, j, k) for (i, j) in edges for k in Kp),
-                              lowBound=0, upBound=1, cat="Binary")
-    x = pulp.LpVariable.dicts("x", ((i, k) for i in clients for k in K_i[i]),
-                              lowBound=0, upBound=1, cat="Binary")
-    v = pulp.LpVariable.dicts("v", ((i, k) for i in nodes for k in Kp),
+    y = pulp.LpVariable.dicts("y", Y_index, lowBound=0, upBound=1, cat="Binary")
+
+    x_index = [(i, k) for i in clients for k in K_i[i]]
+    x = pulp.LpVariable.dicts("x", x_index, lowBound=0, upBound=1, cat="Binary")
+
+    v = pulp.LpVariable.dicts("v", ((i, k) for i in clients for k in Kp),
                               lowBound=0, cat="Continuous")
-    r = {k: pulp.LpVariable(f"r_{k}", lowBound=0, upBound=Kcount.get(k, 0), cat="Integer") for k in Kp}
 
     mdl += (
-        pulp.lpSum(Kp[k]["fixed_cost"] * y[depot, j, k] for j in clients for k in Kp) +
-        pulp.lpSum(cijk[i, j, k] * y[i, j, k] for (i, j) in edges for k in Kp)
-    )
+        pulp.lpSum(Kp[k]["fixed_cost"] * pulp.lpSum(y[arc] for arc in Y_out_dep[k]) for k in Kp)
+        + pulp.lpSum(cijk[i, j, k] * y[(i, j, k)] for (i, j, k) in Y_index)
+    ), "Objective"
 
     for i in clients:
-        mdl += pulp.lpSum(x[i, k] for k in K_i[i]) == 1, f"assign[{i}]"
+        mdl += pulp.lpSum(x[(i, k)] for k in K_i[i]) == 1, f"assign[{i}]"
 
     for i in clients:
         for k in K_i[i]:
-            mdl += pulp.lpSum(y[j, i, k] for j in nodes if j != i) == x[i, k], f"in_deg[{i},{k}]"
-            mdl += pulp.lpSum(y[i, j, k] for j in nodes if j != i) == x[i, k], f"out_deg[{i},{k}]"
+            in_arcs  = [(j, i, k) for (j, i2, k2) in Y_ijk_by_k[k] if (i2 == i) and (j != i)]
+            out_arcs = [(i, j, k) for (i2, j, k2) in Y_ijk_by_k[k] if (i2 == i) and (j != i)]
+            mdl += pulp.lpSum(y[(a, b, k)] for (a, b, _) in in_arcs)  == x[(i, k)], f"in_deg[{i},{k}]"
+            mdl += pulp.lpSum(y[(a, b, k)] for (a, b, _) in out_arcs) == x[(i, k)], f"out_deg[{i},{k}]"
 
     for k in Kp:
-        mdl += pulp.lpSum(y[depot, j, k] for j in clients) == r[k], f"routes_start[{k}]"
-        mdl += pulp.lpSum(y[i, depot, k] for i in clients) == r[k], f"routes_end[{k}]"
+        mdl += (
+            pulp.lpSum(y[(i, j, k)] for (i, j, _) in Y_out_dep[k]) ==
+            pulp.lpSum(y[(i, j, k)] for (i, j, _) in Y_in_dep[k])
+        ), f"depot_flow[{k}]"
 
     for k in Kp:
-        for i in nodes:
-            if (i, i) in [(a, b) for (a, b) in edges]:
-                mdl += y[i, i, k] == 0, f"no_loop[{i},{k}]"
-
-    for k in Kp:
-        for (i, j) in edges:
-            if (i in clients) and (k in K_i[i]):
-                mdl += y[i, j, k] <= x[i, k], f"link_out[{i},{j},{k}]"
-            if (j in clients) and (k in K_i[j]):
-                mdl += y[i, j, k] <= x[j, k], f"link_in[{i},{j},{k}]"
-
-        for j in clients:
-            if k in K_i[j]:
-                mdl += y[depot, j, k] <= x[j, k], f"link_dep_out[{j},{k}]"
-        for i in clients:
-            if k in K_i[i]:
-                mdl += y[i, depot, k] <= x[i, k], f"link_dep_in[{i},{k}]"
+        for (i, j, kk) in Y_ijk_by_k[k]:
+            if (i in clients) and (j in clients):
+                mdl += y[(i, j, k)] <= x[(i, k)], f"link_out[{i},{j},{k}]"
+                mdl += y[(i, j, k)] <= x[(j, k)], f"link_in[{i},{j},{k}]"
+            if (i == depot) and (j in clients):
+                mdl += y[(i, j, k)] <= x[(j, k)], f"link_dep_out[{j},{k}]"
+            if (j == depot) and (i in clients):
+                mdl += y[(i, j, k)] <= x[(i, k)], f"link_dep_in[{i},{k}]"
 
     for k, par in Kp.items():
         Qk = par["capacity"]
-        mdl += v[depot, k] == 0, f"load_depot[{k}]"
 
-        for (i, j) in edges:
-            if j != depot:
-                mdl += v[j, k] >= v[i, k] + demands[j] - Qk * (1 - y[i, j, k]), f"load_flow[{i},{j},{k}]"
+        for (i, j, kk) in Y_ijk_by_k[k]:
+            if kk != k:
+                continue
+            if i == depot and j in clients:
+                mdl += v[(j, k)] >= demands[j] * y[(i, j, k)], f"load_start[{j},{k}]"
+            if (i in clients) and (j in clients):
+                mdl += v[(j, k)] >= v[(i, k)] + demands[j] - Qk * (1 - y[(i, j, k)]), \
+                       f"load_flow[{i},{j},{k}]"
 
         for i in clients:
             if k in K_i[i]:
-                mdl += v[i, k] >= demands[i] * x[i, k], f"load_min[{i},{k}]"
-                mdl += v[i, k] <= Qk * x[i, k], f"load_max[{i},{k}]"
-            else:
-                for j in nodes:
-                    if j != i:
-                        mdl += y[i, j, k] == 0, f"forbid_out[{i},{j},{k}]"
-                        mdl += y[j, i, k] == 0, f"forbid_in[{j},{i},{k}]"
+                mdl += v[(i, k)] >= demands[i] * x[(i, k)], f"load_min[{i},{k}]"
+                mdl += v[(i, k)] <= Qk * x[(i, k)], f"load_max[{i},{k}]"
 
     return mdl
-
 
 def draw_solution(mdl, coords, depot, vehicle_types, thr=0.5):
     positions = {i: coords[i] for i in coords}
