@@ -1,7 +1,7 @@
 import pulp
 from main import build_hvrp_model, draw_solution
 
-mdl = build_hvrp_model("problems/problem-18.vrp")
+mdl = build_hvrp_model("problems/problem-3.vrp")
 solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=86400)
 mdl.solve(solver)
 
@@ -12,7 +12,7 @@ for v in mdl.variables():
     if v.varValue and v.varValue > 1e-6:
         print(v.name, "=", v.varValue)
 
-
+"""
 coords = {
     1:(30,40),
     2:(37,52),
@@ -40,3 +40,4 @@ coords = {
 vehicle_types = {"A": {}, "B": {}, "C": {},"D": {},"E": {}}
 
 draw_solution(mdl, coords=coords, depot=1, vehicle_types=vehicle_types)
+"""
