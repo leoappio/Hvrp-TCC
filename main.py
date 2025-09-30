@@ -13,7 +13,7 @@ def read_hvrp_instance(filepath: str):
     with open(filepath, "r", encoding="utf-8") as f:
         for raw in f:
             ln = raw.strip()
-            if not ln: 
+            if not ln:
                 continue
             if ln.startswith("NODE_COORD_SECTION"):
                 reading_coords, reading_demands, reading_vtypes = True, False, False
@@ -34,15 +34,24 @@ def read_hvrp_instance(filepath: str):
                 break
 
             if reading_coords:
-                i, x, y = ln.split()
+                parts = ln.split()
+                if len(parts) != 3:
+                    continue
+                i, x, y = parts
                 coords[int(i)] = (float(x), float(y))
             elif reading_demands:
-                i, q = ln.split()
+                parts = ln.split()
+                if len(parts) != 2:
+                    continue
+                i, q = parts
                 demands[int(i)] = int(q)
             elif reading_vtypes:
-                if ln.startswith("#"): 
+                if ln.startswith("#"):
                     continue
-                k, cap, fixed, var = ln.split()
+                parts = ln.split()
+                if len(parts) != 4:
+                    continue
+                k, cap, fixed, var = parts
                 vehicle_types[k] = {
                     "capacity": float(cap),
                     "fixed_cost": float(fixed),
@@ -71,98 +80,106 @@ def build_hvrp_model(instance_path: str) -> pulp.LpProblem:
 
     nodes = sorted(coords.keys())
     clients = [i for i in nodes if i != depot]
+    M_types = sorted(Kp.keys())
 
-    K_i = {i: [k for k, par in Kp.items() if demands[i] <= par["capacity"]]
-           for i in clients}
+    K_i = {i: [k for k, par in Kp.items() if demands[i] <= par["capacity"]] for i in clients}
 
-    def dist(i, j): return euclidean(i, j, coords)
+    def cdist(i, j, k):
+        return Kp[k]["var_cost"] * euclidean(i, j, coords)
 
     Y_index = []
-    Y_out_dep = {k: [] for k in Kp} 
-    Y_in_dep  = {k: [] for k in Kp}
-    Y_ijk_by_k = {k: [] for k in Kp}
+    Y_out_dep = {k: [] for k in M_types}
+    Y_in_dep = {k: [] for k in M_types}
+    Y_ijk_by_k = {k: [] for k in M_types}
 
-    for k in Kp:
+    for k in M_types:
         for j in clients:
             if k in K_i[j]:
-                Y_index.append((depot, j, k))
-                Y_out_dep[k].append((depot, j, k))
-                Y_ijk_by_k[k].append((depot, j, k))
+                tpl = (depot, j, k)
+                Y_index.append(tpl)
+                Y_out_dep[k].append(tpl)
+                Y_ijk_by_k[k].append(tpl)
+
         for i in clients:
             if k in K_i[i]:
-                Y_index.append((i, depot, k))
-                Y_in_dep[k].append((i, depot, k))
-                Y_ijk_by_k[k].append((i, depot, k))
+                tpl = (i, depot, k)
+                Y_index.append(tpl)
+                Y_in_dep[k].append(tpl)
+                Y_ijk_by_k[k].append(tpl)
+
         for i in clients:
             if k not in K_i[i]:
                 continue
             for j in clients:
                 if i == j or (k not in K_i[j]):
                     continue
-                Y_index.append((i, j, k))
-                Y_ijk_by_k[k].append((i, j, k))
+                tpl = (i, j, k)
+                Y_index.append(tpl)
+                Y_ijk_by_k[k].append(tpl)
 
-    cijk = {(i, j, k): Kp[k]["var_cost"] * dist(i, j) for (i, j, k) in Y_index}
+    cijk = {(i, j, k): cdist(i, j, k) for (i, j, k) in Y_index}
 
-    mdl = pulp.LpProblem("HVRP_MIP", pulp.LpMinimize)
+    Cik = {}
+    for i in clients:
+        for k in K_i[i]:
+            Cik[(i, k)] = Kp[k]["fixed_cost"] + cdist(i, depot, k)
+
+    mdl = pulp.LpProblem("HVRP4_MIP", pulp.LpMinimize)
 
     y = pulp.LpVariable.dicts("y", Y_index, lowBound=0, upBound=1, cat="Binary")
 
-    x_index = [(i, k) for i in clients for k in K_i[i]]
-    x = pulp.LpVariable.dicts("x", x_index, lowBound=0, upBound=1, cat="Binary")
+    a_index = [(i, k) for i in clients for k in K_i[i]]
+    b_index = [(i, k) for i in clients for k in K_i[i]]
+    a = pulp.LpVariable.dicts("a", a_index, lowBound=0, upBound=1, cat="Binary")
+    b = pulp.LpVariable.dicts("b", b_index, lowBound=0, upBound=1, cat="Binary")
 
-    v = pulp.LpVariable.dicts("v", ((i, k) for i in clients for k in Kp),
-                              lowBound=0, cat="Continuous")
+    v = pulp.LpVariable.dicts("v", ((i, k) for i in clients for k in M_types), lowBound=0, cat="Continuous")
 
     mdl += (
-        pulp.lpSum(Kp[k]["fixed_cost"] * pulp.lpSum(y[arc] for arc in Y_out_dep[k]) for k in Kp)
-        + pulp.lpSum(cijk[i, j, k] * y[(i, j, k)] for (i, j, k) in Y_index)
+        pulp.lpSum(Cik[(i, k)] * a[(i, k)] for (i, k) in a_index)
+        + pulp.lpSum(cijk[(i, j, k)] * y[(i, j, k)] for (i, j, k) in Y_index)
     ), "Objective"
 
     for i in clients:
-        mdl += pulp.lpSum(x[(i, k)] for k in K_i[i]) == 1, f"assign[{i}]"
+        mdl += pulp.lpSum(a[(i, k)] for k in K_i[i]) + pulp.lpSum(b[(i, k)] for k in K_i[i]) == 1, f"visit[{i}]"
+
 
     for i in clients:
         for k in K_i[i]:
-            in_arcs  = [(j, i, k) for (j, i2, k2) in Y_ijk_by_k[k] if (i2 == i) and (j != i)]
-            out_arcs = [(i, j, k) for (i2, j, k2) in Y_ijk_by_k[k] if (i2 == i) and (j != i)]
-            mdl += pulp.lpSum(y[(a, b, k)] for (a, b, _) in in_arcs)  == x[(i, k)], f"in_deg[{i},{k}]"
-            mdl += pulp.lpSum(y[(a, b, k)] for (a, b, _) in out_arcs) == x[(i, k)], f"out_deg[{i},{k}]"
+            in_arcs = [(j, i, k) for (j, i2, k2) in Y_ijk_by_k[k] if i2 == i and j != i]
+            mdl += pulp.lpSum(y[(j, i, k)] for (j, _, _) in in_arcs) == a[(i, k)] + b[(i, k)], f"in_deg[{i},{k}]"
 
-    for k in Kp:
-        mdl += (
-            pulp.lpSum(y[(i, j, k)] for (i, j, _) in Y_out_dep[k]) ==
-            pulp.lpSum(y[(i, j, k)] for (i, j, _) in Y_in_dep[k])
-        ), f"depot_flow[{k}]"
+    for i in clients:
+        for k in K_i[i]:
+            out_arcs = [(i, j, k) for (i2, j, k2) in Y_ijk_by_k[k] if i2 == i and j != i]
+            mdl += pulp.lpSum(y[(i, j, k)] for (_, j, _) in out_arcs) == b[(i, k)], f"out_deg[{i},{k}]"
 
-    for k in Kp:
+    for k in M_types:
+        mdl += pulp.lpSum(y[(depot, j, k)] for (depot, j, _) in Y_out_dep[k]) == \
+               pulp.lpSum(a[(i, k)] for i in clients if k in K_i[i]), f"depot_balance[{k}]"
+
+    for k in M_types:
+        Qk = Kp[k]["capacity"]
         for (i, j, kk) in Y_ijk_by_k[k]:
-            if (i in clients) and (j in clients):
-                mdl += y[(i, j, k)] <= x[(i, k)], f"link_out[{i},{j},{k}]"
-                mdl += y[(i, j, k)] <= x[(j, k)], f"link_in[{i},{j},{k}]"
-            if (i == depot) and (j in clients):
-                mdl += y[(i, j, k)] <= x[(j, k)], f"link_dep_out[{j},{k}]"
-            if (j == depot) and (i in clients):
-                mdl += y[(i, j, k)] <= x[(i, k)], f"link_dep_in[{i},{k}]"
-
-    for k, par in Kp.items():
-        Qk = par["capacity"]
-
-        for (i, j, kk) in Y_ijk_by_k[k]:
-            if kk != k:
+            if kk != k or i == depot:
                 continue
-            if i == depot and j in clients:
-                mdl += v[(j, k)] >= demands[j] * y[(i, j, k)], f"load_start[{j},{k}]"
-            if (i in clients) and (j in clients):
-                mdl += v[(j, k)] >= v[(i, k)] + demands[j] - Qk * (1 - y[(i, j, k)]), \
-                       f"load_flow[{i},{j},{k}]"
+            if (i in clients and k in K_i[i]) and (j in clients and k in K_i[j]):
+                mdl += v[(j, k)] >= v[(i, k)] + demands[j] * (a[(j, k)] + b[(j, k)]) \
+                       - Qk * (a[(i, k)] + b[(i, k)] - y[(i, j, k)]), f"mtz_flow[{i},{j},{k}]"
 
-        for i in clients:
-            if k in K_i[i]:
-                mdl += v[(i, k)] >= demands[i] * x[(i, k)], f"load_min[{i},{k}]"
-                mdl += v[(i, k)] <= Qk * x[(i, k)], f"load_max[{i},{k}]"
+    for i in clients:
+        for k in K_i[i]:
+            incoming = [(j, i, k) for (j, i2, k2) in Y_ijk_by_k[k] if i2 == i and j != i]
+            mdl += v[(i, k)] >= demands[i] * (a[(i, k)] + b[(i, k)]) + \
+                   pulp.lpSum(demands[j] * y[(j, i, k)] for (j, _, _) in incoming), f"mtz_lb[{i},{k}]"
+
+    for i in clients:
+        for k in K_i[i]:
+            Qk = Kp[k]["capacity"]
+            mdl += v[(i, k)] <= Qk * (a[(i, k)] + b[(i, k)]), f"cap[{i},{k}]"
 
     return mdl
+
 
 def draw_solution(mdl, coords, depot, vehicle_types, thr=0.5):
     positions = {i: coords[i] for i in coords}
@@ -171,8 +188,7 @@ def draw_solution(mdl, coords, depot, vehicle_types, thr=0.5):
     for var in mdl.variables():
         if not (var.name.startswith("y_") and var.varValue and var.varValue > thr):
             continue
-
-        inside = var.name[var.name.find("(")+1:var.name.rfind(")")]
+        inside = var.name[var.name.find("(") + 1: var.name.rfind(")")]
         i_str, j_str, k_str = inside.split(",_")
         i = int(i_str)
         j = int(j_str)
@@ -181,6 +197,8 @@ def draw_solution(mdl, coords, depot, vehicle_types, thr=0.5):
 
     routes = []
     for k, arcs in arcs_by_type.items():
+        if not arcs:
+            continue
         succ = {}
         for (i, j) in arcs:
             succ[i] = j
@@ -210,7 +228,6 @@ def draw_solution(mdl, coords, depot, vehicle_types, thr=0.5):
     plt.figure(figsize=(7, 7))
     colors = ["tab:blue", "tab:green", "tab:orange", "tab:purple",
               "tab:brown", "tab:red", "tab:pink", "tab:olive", "tab:cyan"]
-
     color_map = {}
     for idx, (veh, _) in enumerate(routes):
         color_map[veh] = colors[idx % len(colors)]
@@ -235,7 +252,8 @@ def draw_solution(mdl, coords, depot, vehicle_types, thr=0.5):
         handles.append(Line2D([0], [0], color=color_map[veh], lw=2, label=veh))
     handles.insert(0, Line2D([0], [0], marker='o', color='w', label='Depósito',
                              markerfacecolor='red', markersize=10))
-    plt.legend(handles=handles, loc="best")
+    if handles:
+        plt.legend(handles=handles, loc="best")
 
     plt.axis("off")
     plt.tight_layout()
