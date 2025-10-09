@@ -1,7 +1,7 @@
 import pulp
 from main import build_hvrp_model, draw_solution, read_hvrp_instance
 
-problem = "problems/problem-3-10-A.vrp"
+problem = "problems/problem-4-10-A.vrp"
 timeLimit = 3600
 
 mdl = build_hvrp_model(problem)
